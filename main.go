@@ -3,13 +3,16 @@ package main
 
 import (
 	"bufio"
+	"bytes" // Add this
 	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strconv" // Add this
 	"strings"
+	"time" // Add this
 
 	"github.com/google/go-github/v57/github"
 	"golang.org/x/oauth2"
@@ -17,9 +20,10 @@ import (
 
 // Config holds our application configuration
 type Config struct {
-	GitHubToken   string
-	Port          string
-	WebhookSecret string
+	GitHubToken    string
+	Port           string
+	WebhookSecret  string
+	AnthropicToken string
 }
 
 // CycloneBot handles GitHub operations and AI integration
@@ -171,98 +175,149 @@ func isBinaryFile(filename string) bool {
 	return false
 }
 
+// ClaudeResponse represents the response from Claude API
+type ClaudeResponse struct {
+	Content []struct {
+		Text string `json:"text"`
+	} `json:"content"`
+}
+
+// ClaudeRequest represents a request to Claude API
+type ClaudeRequest struct {
+	Model     string `json:"model"`
+	MaxTokens int    `json:"max_tokens"`
+	Messages  []struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	} `json:"messages"`
+}
+
 // getAIReview generates an AI review of the code (placeholder implementation)
 func (bot *CycloneBot) getAIReview(diff, title, body string) ReviewResult {
-	// TODO: Integrate with AI API (Claude, OpenAI, etc.)
-	// For now, return a placeholder review with some line comments
+	claudeReview := bot.callClaudeAPI(diff, title, body)
 
-	lines := strings.Split(diff, "\n")
-	addedLines := 0
-	removedLines := 0
+	// Parse Claude's response into structured feedback
+	return bot.parseClaudeResponse(claudeReview, diff)
+}
 
-	// Sample line-specific comments (in real implementation, AI would generate these)
-	comments := []ReviewComment{}
+func (bot *CycloneBot) callClaudeAPI(diff, title, body string) string {
+	prompt := fmt.Sprintf(`You are Cyclone, an AI code review assistant. Please review this GitHub pull request and provide constructive feedback.
 
-	// Find some added lines to comment on (just for demo)
-	currentFile := ""
-	position := 0
-	lineNumber := 0
+**PR Title:** %s
 
-	for _, line := range lines {
-		if strings.HasPrefix(line, "=== ") && strings.HasSuffix(line, " ===") {
-			// Extract filename
-			currentFile = strings.Trim(line, "=== ")
-			continue
-		}
+**PR Description:** %s
 
-		if strings.HasPrefix(line, "@@") {
-			// Parse hunk header to get line numbers
-			// Format: @@ -old_start,old_count +new_start,new_count @@
-			parts := strings.Fields(line)
-			if len(parts) >= 3 {
-				newRange := parts[2] // +new_start,new_count
-				if strings.HasPrefix(newRange, "+") {
-					fmt.Sscanf(newRange[1:], "%d", &lineNumber)
-				}
-			}
-			position++
-			continue
-		}
+**Code Changes:**
+%s
 
-		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
-			addedLines++
+Please provide:
+1. A brief overall summary of the changes
+2. Specific feedback on code quality, potential bugs, and improvements
 
-			// Add sample comments for certain patterns (demo purposes)
-			if strings.Contains(line, "console.log") && currentFile != "" {
-				comments = append(comments, ReviewComment{
-					Path: currentFile,
-					Line: lineNumber,
-					Body: "🌪️ **Cyclone**: Consider removing this console.log before merging to production.",
-					Side: "RIGHT",
-				})
-			}
+For any line-specific comments, use this EXACT format:
+PR_COMMENT:filename:line_number: your comment here
 
-			if strings.Contains(line, "TODO") && currentFile != "" {
-				comments = append(comments, ReviewComment{
-					Path: currentFile,
-					Line: lineNumber,
-					Body: "🌪️ **Cyclone**: TODO found - consider creating a GitHub issue to track this work.",
-					Side: "RIGHT",
-				})
-			}
+Examples:
+PR_COMMENT:main.go:45: Consider using a more descriptive variable name
+PR_COMMENT:utils.js:123: This function could benefit from error handling
+PR_COMMENT:api/handler.py:67: Potential SQL injection vulnerability here
 
-			lineNumber++
-		} else if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") {
-			removedLines++
-		} else if !strings.HasPrefix(line, "\\") && !strings.HasPrefix(line, "@@") {
-			lineNumber++
-		}
+Be constructive, helpful, and focus on actionable feedback. Use the 🌪️ emoji to mark your comments as coming from Cyclone.`, title, body, diff)
 
-		position++
+	reqBody := ClaudeRequest{
+		Model:     "claude-sonnet-4-20250514",
+		MaxTokens: 4000,
+		Messages: []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		}{
+			{
+				Role:    "user",
+				Content: prompt,
+			},
+		},
 	}
 
-	summary := fmt.Sprintf(`## 🌪️ Cyclone AI Code Review
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		log.Printf("Error marshaling request: %v", err)
+		return "Error generating AI review"
+	}
 
-**Summary**: This PR modifies %d lines (+%d, -%d additions/deletions).
+	req, err := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewBuffer(jsonData))
+	if err != nil {
+		log.Printf("Error creating request: %v", err)
+		return "Error generating AI review"
+	}
 
-**Quick Analysis**:
-- Files changed: Multiple files detected
-- Line-specific comments: %d
-- Overall scope: %s
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", bot.config.AnthropicToken)
+	req.Header.Set("anthropic-version", "2023-06-01")
 
-**Next Steps**: 
-- [ ] AI integration pending - will provide detailed feedback once connected
-- [ ] Consider adding tests for new functionality
-- [ ] Verify documentation is updated
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Error calling Claude API: %v", err)
+		return "Error generating AI review"
+	}
+	defer resp.Body.Close()
 
-*This is a placeholder review. Full Cyclone AI analysis coming soon!*`,
-		addedLines+removedLines, addedLines, removedLines, len(comments),
-		func() string {
-			if addedLines+removedLines > 100 {
-				return "Large change"
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("Claude API returned status %d", resp.StatusCode)
+		return "Error generating AI review"
+	}
+
+	var claudeResp ClaudeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&claudeResp); err != nil {
+		log.Printf("Error decoding response: %v", err)
+		return "Error generating AI review"
+	}
+
+	if len(claudeResp.Content) > 0 {
+		return claudeResp.Content[0].Text
+	}
+
+	return "No response from Claude"
+}
+
+func (bot *CycloneBot) parseClaudeResponse(claudeText, diff string) ReviewResult {
+	lines := strings.Split(claudeText, "\n")
+	var summaryLines []string
+	var comments []ReviewComment
+
+	// Parse line-specific comments in format "PR_COMMENT:FILE:LINE_NUMBER: comment"
+	for _, line := range lines {
+		if strings.HasPrefix(line, "PR_COMMENT:") {
+			// Remove the PR_COMMENT: prefix
+			content := strings.TrimPrefix(line, "PR_COMMENT:")
+
+			// Split into file:line:comment
+			parts := strings.SplitN(content, ":", 3)
+			if len(parts) >= 3 {
+				file := strings.TrimSpace(parts[0])
+				lineNumStr := strings.TrimSpace(parts[1])
+				comment := strings.TrimSpace(parts[2])
+
+				if lineNum, err := strconv.Atoi(lineNumStr); err == nil {
+					comments = append(comments, ReviewComment{
+						Path: file,
+						Line: lineNum,
+						Side: "RIGHT",
+						Body: fmt.Sprintf("🌪️ **Cyclone**: %s", comment),
+					})
+					continue
+				}
 			}
-			return "Small to medium change"
-		}())
+		}
+
+		// If it's not a PR_COMMENT line, add it to the summary
+		summaryLines = append(summaryLines, line)
+	}
+
+	summary := strings.Join(summaryLines, "\n")
+	if !strings.Contains(summary, "🌪️") {
+		summary = "## 🌪️ Cyclone AI Code Review\n\n" + summary
+	}
 
 	return ReviewResult{
 		Summary:  summary,
@@ -310,9 +365,15 @@ func main() {
 
 	// Load configuration from environment variables
 	config := &Config{
-		GitHubToken:   os.Getenv("GITHUB_TOKEN"),
-		Port:          getEnv("PORT", "8080"),
-		WebhookSecret: os.Getenv("WEBHOOK_SECRET"),
+		GitHubToken:    os.Getenv("GITHUB_TOKEN"),
+		Port:           getEnv("PORT", "8080"),
+		WebhookSecret:  os.Getenv("WEBHOOK_SECRET"),
+		AnthropicToken: os.Getenv("ANTHROPIC_API_KEY"),
+	}
+
+	// Add validation for anthropic api key
+	if config.AnthropicToken == "" {
+		log.Fatal("ANTHROPIC_API_KEY environment variable is required")
 	}
 
 	// Validate required configuration
