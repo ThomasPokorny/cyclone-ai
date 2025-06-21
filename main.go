@@ -212,17 +212,43 @@ func (bot *CycloneBot) callClaudeAPI(diff, title, body string) string {
 
 Please provide:
 1. A brief overall summary of the changes
-2. Specific feedback on code quality, potential bugs, and improvements
+2. Specific feedback categorized by type and priority
+3. End with a short, lighthearted poem (2-4 lines) based on the changes made
+
+**Review Guidelines:**
+- Be constructive and actionable - explain the "why" behind suggestions
+- Include code examples when suggesting alternatives
+- Use collaborative language ("we could" vs "you should")
+- Focus on logic correctness, security, maintainability, and team conventions
+- Acknowledge good patterns when present
+
+**Comment Categories - Use these prefixes:**
+- 🧰 **nit**: Minor style/preference issues, non-blocking
+- 💡 **suggestion**: Improvements that would be nice but aren't required
+- ⚠️ **issue**: Problems that should be addressed before merging
+- 🚫 **blocking**: Critical issues that must be fixed
+- ❓ **question**: Seeking clarification about intent or approach
+
+**Focus Areas - Use these prefixes when relevant:**
+- 🎨 **style**: Formatting, naming conventions
+- ⚡ **perf**: Performance concerns
+- 🔒 **security**: Security-related issues
+- 📚 **docs**: Documentation needs
+- 🧪 **test**: Testing coverage or quality
+- 🔧 **refactor**: Code organization improvements
 
 For any line-specific comments, use this EXACT format:
-PR_COMMENT:filename:line_number: your comment here
+PR_COMMENT:filename:line_number: [emoji] **[category]**: your comment here
+
+When providing commit-able suggestions, use code blocks with the language specified.
+
 
 Examples:
-PR_COMMENT:main.go:45: Consider using a more descriptive variable name
-PR_COMMENT:utils.js:123: This function could benefit from error handling
-PR_COMMENT:api/handler.py:67: Potential SQL injection vulnerability here
+PR_COMMENT:main.go:45: 🔍 **nit**: Consider using a more descriptive variable name like 'userCount' instead of 'cnt'
+PR_COMMENT:utils.js:123: ⚠️ **issue**: This function needs error handling for the API call
+PR_COMMENT:api/handler.py:67: 🚫 **blocking**: 🔒 **security**: Potential SQL injection vulnerability - use parameterized queries
 
-Be constructive, helpful, and focus on actionable feedback. Use the 🌪️ emoji to mark your comments as coming from Cyclone.`, title, body, diff)
+Be constructive, helpful, and focus on actionable feedback.`, title, body, diff)
 
 	reqBody := ClaudeRequest{
 		Model:     "claude-sonnet-4-20250514",
