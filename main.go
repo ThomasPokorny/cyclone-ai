@@ -49,6 +49,20 @@ type WebhookPayload struct {
 	Repository  *github.Repository  `json:"repository"`
 }
 
+// ReviewComment represents a comment on a specific line
+type ReviewComment struct {
+	Path string
+	Line int
+	Body string
+	Side string
+}
+
+// ReviewResult holds the overall review and line-specific comments
+type ReviewResult struct {
+	Summary  string
+	Comments []ReviewComment
+}
+
 // handleWebhook processes incoming GitHub webhooks
 func (bot *CycloneBot) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -99,9 +113,9 @@ func (bot *CycloneBot) processPullRequest(repo *github.Repository, pr *github.Pu
 	// Get AI review (placeholder for now)
 	review := bot.getAIReview(diff, pr.GetTitle(), pr.GetBody())
 
-	// Post the review as a comment
-	if err := bot.postReviewComment(ctx, owner, repoName, prNumber, review); err != nil {
-		log.Printf("Error posting review comment: %v", err)
+	// Post the review with line-specific comments
+	if err := bot.postPRReview(ctx, owner, repoName, prNumber, review); err != nil {
+		log.Printf("Error posting PR review: %v", err)
 		return
 	}
 
@@ -158,28 +172,82 @@ func isBinaryFile(filename string) bool {
 }
 
 // getAIReview generates an AI review of the code (placeholder implementation)
-func (bot *CycloneBot) getAIReview(diff, title, body string) string {
+func (bot *CycloneBot) getAIReview(diff, title, body string) ReviewResult {
 	// TODO: Integrate with AI API (Claude, OpenAI, etc.)
-	// For now, return a placeholder review
+	// For now, return a placeholder review with some line comments
 
 	lines := strings.Split(diff, "\n")
 	addedLines := 0
 	removedLines := 0
 
+	// Sample line-specific comments (in real implementation, AI would generate these)
+	comments := []ReviewComment{}
+
+	// Find some added lines to comment on (just for demo)
+	currentFile := ""
+	position := 0
+	lineNumber := 0
+
 	for _, line := range lines {
+		if strings.HasPrefix(line, "=== ") && strings.HasSuffix(line, " ===") {
+			// Extract filename
+			currentFile = strings.Trim(line, "=== ")
+			continue
+		}
+
+		if strings.HasPrefix(line, "@@") {
+			// Parse hunk header to get line numbers
+			// Format: @@ -old_start,old_count +new_start,new_count @@
+			parts := strings.Fields(line)
+			if len(parts) >= 3 {
+				newRange := parts[2] // +new_start,new_count
+				if strings.HasPrefix(newRange, "+") {
+					fmt.Sscanf(newRange[1:], "%d", &lineNumber)
+				}
+			}
+			position++
+			continue
+		}
+
 		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
 			addedLines++
+
+			// Add sample comments for certain patterns (demo purposes)
+			if strings.Contains(line, "console.log") && currentFile != "" {
+				comments = append(comments, ReviewComment{
+					Path: currentFile,
+					Line: lineNumber,
+					Body: "🌪️ **Cyclone**: Consider removing this console.log before merging to production.",
+					Side: "RIGHT",
+				})
+			}
+
+			if strings.Contains(line, "TODO") && currentFile != "" {
+				comments = append(comments, ReviewComment{
+					Path: currentFile,
+					Line: lineNumber,
+					Body: "🌪️ **Cyclone**: TODO found - consider creating a GitHub issue to track this work.",
+					Side: "RIGHT",
+				})
+			}
+
+			lineNumber++
 		} else if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") {
 			removedLines++
+		} else if !strings.HasPrefix(line, "\\") && !strings.HasPrefix(line, "@@") {
+			lineNumber++
 		}
+
+		position++
 	}
 
-	return fmt.Sprintf(`## 🌪️ Cyclone AI Code Review
+	summary := fmt.Sprintf(`## 🌪️ Cyclone AI Code Review
 
 **Summary**: This PR modifies %d lines (+%d, -%d additions/deletions).
 
 **Quick Analysis**:
 - Files changed: Multiple files detected
+- Line-specific comments: %d
 - Overall scope: %s
 
 **Next Steps**: 
@@ -188,24 +256,43 @@ func (bot *CycloneBot) getAIReview(diff, title, body string) string {
 - [ ] Verify documentation is updated
 
 *This is a placeholder review. Full Cyclone AI analysis coming soon!*`,
-		addedLines+removedLines, addedLines, removedLines,
+		addedLines+removedLines, addedLines, removedLines, len(comments),
 		func() string {
 			if addedLines+removedLines > 100 {
 				return "Large change"
 			}
 			return "Small to medium change"
 		}())
+
+	return ReviewResult{
+		Summary:  summary,
+		Comments: comments,
+	}
 }
 
-// postReviewComment posts a review comment to the PR
-func (bot *CycloneBot) postReviewComment(ctx context.Context, owner, repo string, prNumber int, review string) error {
-	comment := &github.IssueComment{
-		Body: github.String(review),
+func (bot *CycloneBot) postPRReview(ctx context.Context, owner, repo string, prNumber int, review ReviewResult) error {
+	// Prepare review comments for line-specific feedback
+	var reviewComments []*github.DraftReviewComment
+
+	for _, comment := range review.Comments {
+		reviewComments = append(reviewComments, &github.DraftReviewComment{
+			Path: github.String(comment.Path),
+			Line: github.Int(comment.Line),
+			Side: github.String(comment.Side),
+			Body: github.String(comment.Body),
+		})
 	}
 
-	_, _, err := bot.client.Issues.CreateComment(ctx, owner, repo, prNumber, comment)
+	// Create the review
+	reviewRequest := &github.PullRequestReviewRequest{
+		Body:     github.String(review.Summary),
+		Event:    github.String("COMMENT"), // Can be COMMENT, APPROVE, or REQUEST_CHANGES
+		Comments: reviewComments,
+	}
+
+	_, _, err := bot.client.PullRequests.CreateReview(ctx, owner, repo, prNumber, reviewRequest)
 	if err != nil {
-		return fmt.Errorf("failed to create comment: %w", err)
+		return fmt.Errorf("failed to create review: %w", err)
 	}
 
 	return nil
