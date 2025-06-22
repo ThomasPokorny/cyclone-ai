@@ -259,7 +259,7 @@ const (
 
 	// Warning thresholds (still review, but warn)
 	WARN_FILES_THRESHOLD     = 20
-	WARN_ADDITIONS_THRESHOLD = 600
+	WARN_ADDITIONS_THRESHOLD = 400
 )
 
 type PRSizeCheck struct {
@@ -313,17 +313,43 @@ Please provide:
 - 🧪 **test**: Testing coverage or quality
 - 🔧 **refactor**: Code organization improvements
 
+**Response Structure:**
+Please structure your response EXACTLY as follows:
+
+SUMMARY: $$
+Provide a comprehensive summary including:
+- Brief overall analysis of what this PR accomplishes
+- Key changes made (2-4 bullet points)
+- Impact assessment (what this means for the codebase)
+- Good patterns you noticed (acknowledge positive aspects)
+- Any overarching concerns or recommendations
+$$
+
 For any line-specific comments, use this EXACT format:
-PR_COMMENT:filename:line_number: [emoji] **[category]**: your comment here
-
-When providing commit-able suggestions, use code blocks with the language specified.
-
-%s
-
+PR_COMMENT:filename:line_number: [emoji] **[category]**: $$ 
+your comment here (can be multiple lines)
+include code examples
+end your comment
+$$
 Examples:
 PR_COMMENT:main.go:45: 🔍 **nit**: Consider using a more descriptive variable name like 'userCount' instead of 'cnt'
 PR_COMMENT:utils.js:123: ⚠️ **issue**: This function needs error handling for the API call
 PR_COMMENT:api/handler.py:67: 🚫 **blocking**: 🔒 **security**: Potential SQL injection vulnerability - use parameterized queries
+
+
+POEM: $$
+End with a short, lighthearted poem (2-4 lines) inspired by the changes made.
+Make it fun and relevant to the code changes.
+$$
+
+**IMPORTANT Rules:**
+- Use SINGLE line numbers only, NOT ranges like "75-82"
+- Always include the colon after **[category]**:
+- Always use the $$ delimiters for all sections
+- Keep general analysis in SUMMARY, use PR_COMMENT only for specific line feedback
+- Include code examples in PR_COMMENT when suggesting alternatives
+
+%s
 
 Be constructive, helpful, and focus on actionable feedback.`, title, body, bot.getPrecisionGuidelines(repoConfig.Precision), diff, repoConfig.CustomPrompt)
 
@@ -505,47 +531,109 @@ func (bot *CycloneBot) getPrecisionGuidelines(precision ReviewPrecision) string 
 }
 
 func (bot *CycloneBot) parseClaudeResponse(claudeText, diff string) ReviewResult {
-	lines := strings.Split(claudeText, "\n")
-	var summaryLines []string
 	var comments []ReviewComment
+	var summary string
+	var poem string
 
-	// Parse line-specific comments in format "PR_COMMENT:FILE:LINE_NUMBER: comment"
-	for _, line := range lines {
-		if strings.HasPrefix(line, "PR_COMMENT:") {
-			// Remove the PR_COMMENT: prefix
-			content := strings.TrimPrefix(line, "PR_COMMENT:")
+	// Extract SUMMARY section
+	summary = bot.extractSection(claudeText, "SUMMARY:")
 
-			// Split into file:line:comment
-			parts := strings.SplitN(content, ":", 3)
-			if len(parts) >= 3 {
-				file := strings.TrimSpace(parts[0])
-				lineNumStr := strings.TrimSpace(parts[1])
-				comment := strings.TrimSpace(parts[2])
+	// Extract POEM section
+	poem = bot.extractSection(claudeText, "POEM:")
 
-				if lineNum, err := strconv.Atoi(lineNumStr); err == nil {
-					comments = append(comments, ReviewComment{
-						Path: file,
-						Line: lineNum,
-						Side: "RIGHT",
-						Body: fmt.Sprintf("%s", comment),
-					})
-					continue
-				}
-			}
+	// Extract PR_COMMENT sections
+	parts := strings.Split(claudeText, "PR_COMMENT:")
+	for i := 1; i < len(parts); i++ {
+		comment := bot.parsePRCommentBlock(parts[i])
+		if comment != nil {
+			comments = append(comments, *comment)
 		}
-
-		// If it's not a PR_COMMENT line, add it to the summary
-		summaryLines = append(summaryLines, line)
 	}
 
-	summary := strings.Join(summaryLines, "\n")
-	if !strings.Contains(summary, "🌪️") {
-		summary = "## 🌪️ Cyclone AI Code Review\n\n" + summary
+	// Combine summary and poem
+	finalSummary := summary
+	if poem != "" {
+		finalSummary += "\n\n" + poem
+	}
+
+	// Add Cyclone branding if not present
+	if !strings.Contains(finalSummary, "🌪️") {
+		finalSummary = "## 🌪️ Cyclone AI Code Review\n\n" + finalSummary
 	}
 
 	return ReviewResult{
-		Summary:  summary,
+		Summary:  finalSummary,
 		Comments: comments,
+	}
+}
+
+func (bot *CycloneBot) extractSection(text, sectionHeader string) string {
+	// Find the section start
+	startIndex := strings.Index(text, sectionHeader)
+	if startIndex == -1 {
+		return ""
+	}
+
+	// Find the $$ delimiter after the section header
+	delimStart := strings.Index(text[startIndex:], "$$")
+	if delimStart == -1 {
+		return ""
+	}
+	delimStart += startIndex + 2 // Move past the $$
+
+	// Find the closing $$ delimiter
+	delimEnd := strings.Index(text[delimStart:], "$$")
+	if delimEnd == -1 {
+		return ""
+	}
+	delimEnd += delimStart
+
+	// Extract and clean the content
+	content := strings.TrimSpace(text[delimStart:delimEnd])
+	return content
+}
+
+func (bot *CycloneBot) parsePRCommentBlock(block string) *ReviewComment {
+	// Find the content between $$ delimiters
+	startDelim := strings.Index(block, "$$")
+	if startDelim == -1 {
+		return nil
+	}
+
+	endDelim := strings.LastIndex(block, "$$")
+	if endDelim == -1 || endDelim <= startDelim {
+		return nil
+	}
+
+	// Extract header (file:line:category: part before $$)
+	header := strings.TrimSpace(block[:startDelim])
+
+	// Extract content (between the $$ delimiters)
+	content := strings.TrimSpace(block[startDelim+2 : endDelim])
+
+	// Parse header: filename:line_number: emoji **category**:
+	parts := strings.SplitN(header, ":", 3)
+	if len(parts) < 3 {
+		log.Printf("Invalid PR_COMMENT header format: %s", header)
+		return nil
+	}
+
+	file := strings.TrimSpace(parts[0])
+	lineNumStr := strings.TrimSpace(parts[1])
+	categoryPart := strings.TrimSpace(parts[2])
+
+	lineNum, err := strconv.Atoi(lineNumStr)
+	if err != nil {
+		log.Printf("Invalid line number in PR_COMMENT: %s", lineNumStr)
+		return nil
+	}
+
+	// The categoryPart contains: "emoji **category**:"
+	return &ReviewComment{
+		Path: file,
+		Line: lineNum,
+		Side: "RIGHT",
+		Body: fmt.Sprintf("%s\n\n%s", categoryPart, content),
 	}
 }
 
