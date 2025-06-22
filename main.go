@@ -111,9 +111,9 @@ func (bot *CycloneBot) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Only process opened or updated PRs
-	if payload.Action != "opened" && payload.Action != "synchronize" {
-		log.Printf("Ignoring action: %s", payload.Action)
+	// Only process specific actions that warrant a review
+	if !bot.shouldTriggerReview(payload.Action, payload.PullRequest) {
+		log.Printf("Ignoring action: %s for PR #%d", payload.Action, payload.PullRequest.GetNumber())
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -124,6 +124,32 @@ func (bot *CycloneBot) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	go bot.processPullRequest(payload.Repository, payload.PullRequest)
 
 	w.WriteHeader(http.StatusOK)
+}
+
+func (bot *CycloneBot) shouldTriggerReview(action string, pr *github.PullRequest) bool {
+	// Skip draft PRs entirely
+	if pr.GetDraft() {
+		return false
+	}
+
+	switch action {
+	case "opened":
+		// Review when PR is first opened (and not draft)
+		return true
+
+	case "ready_for_review":
+		// Review when PR moves from draft to ready
+		return true
+
+	case "synchronize":
+		// Only review new commits if PR is not draft and we haven't reviewed recently
+		// You might want to add additional logic here to avoid reviewing every commit
+		return false // For now, skip synchronize events
+
+	default:
+		// Skip all other actions (closed, edited, etc.)
+		return false
+	}
 }
 
 // processPullRequest handles the main logic for reviewing a PR
