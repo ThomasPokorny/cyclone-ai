@@ -381,7 +381,7 @@ PR_COMMENT:api/handler.py:67: 🚫 **blocking**: 🔒 **security**: Potential SQ
 Be constructive, helpful, and focus on actionable feedback.`, title, body, bot.getPrecisionGuidelines(repoConfig.Precision), diff, repoConfig.CustomPrompt)
 
 	reqBody := ClaudeRequest{
-		Model:     "claude-3-5-sonnet-20241022", //make models configureable: claude-sonnet-4-20250514, claude-3-5-sonnet-20241022, claude-3-haiku-20240307
+		Model:     "claude-sonnet-4-20250514", //make models configureable: claude-sonnet-4-20250514, claude-3-5-sonnet-20241022, claude-3-haiku-20240307
 		MaxTokens: 8000,
 		Messages: []struct {
 			Role    string `json:"role"`
@@ -410,7 +410,7 @@ Be constructive, helpful, and focus on actionable feedback.`, title, body, bot.g
 	req.Header.Set("x-api-key", bot.config.AnthropicToken)
 	req.Header.Set("anthropic-version", "2023-06-01")
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Printf("Error calling Claude API: %v", err)
