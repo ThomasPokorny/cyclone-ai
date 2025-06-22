@@ -28,12 +28,13 @@ type Config struct {
 
 // CycloneBot handles GitHub operations and AI integration
 type CycloneBot struct {
-	client *github.Client
-	config *Config
+	client       *github.Client
+	config       *Config
+	reviewConfig *ReviewConfig
 }
 
 // NewCycloneBot creates a new Cyclone bot instance
-func NewCycloneBot(config *Config) *CycloneBot {
+func NewCycloneBot(config *Config, reviewConfig *ReviewConfig) *CycloneBot {
 	ctx := context.Background()
 	ts := oauth2.StaticTokenSource(
 		&oauth2.Token{AccessToken: config.GitHubToken},
@@ -41,8 +42,9 @@ func NewCycloneBot(config *Config) *CycloneBot {
 	tc := oauth2.NewClient(ctx, ts)
 
 	return &CycloneBot{
-		client: github.NewClient(tc),
-		config: config,
+		client:       github.NewClient(tc),
+		config:       config,
+		reviewConfig: reviewConfig,
 	}
 }
 
@@ -65,6 +67,33 @@ type ReviewComment struct {
 type ReviewResult struct {
 	Summary  string
 	Comments []ReviewComment
+}
+
+// ReviewPrecision defines how strict the review should be
+type ReviewPrecision string
+
+const (
+	PrecisionMinor  ReviewPrecision = "minor"
+	PrecisionMedium ReviewPrecision = "medium"
+	PrecisionStrict ReviewPrecision = "strict"
+)
+
+// RepositoryConfig holds configuration for a specific repository
+type RepositoryConfig struct {
+	Name         string          `json:"name"`
+	Precision    ReviewPrecision `json:"precision"`
+	CustomPrompt string          `json:"custom_prompt"`
+}
+
+// OrganizationConfig holds configuration for an entire organization
+type OrganizationConfig struct {
+	Name         string             `json:"name"`
+	Repositories []RepositoryConfig `json:"repositories"`
+}
+
+// ReviewConfig holds the complete review configuration
+type ReviewConfig struct {
+	Organizations []OrganizationConfig `json:"organizations"`
 }
 
 // handleWebhook processes incoming GitHub webhooks
@@ -107,6 +136,31 @@ func (bot *CycloneBot) processPullRequest(repo *github.Repository, pr *github.Pu
 
 	log.Printf("Processing PR #%d in %s/%s", prNumber, owner, repoName)
 
+	// Get repository-specific configuration
+	repoConfig := bot.getRepositoryConfig(owner, repoName)
+	if repoConfig == nil {
+		log.Printf("Repository %s/%s not found in configuration - skipping review", owner, repoName)
+		return
+	}
+
+	// Check PR size before proceeding
+	sizeCheck := bot.checkPRSize(pr)
+	if !sizeCheck.ShouldReview {
+		log.Printf("PR #%d is too large - posting skip message instead of review", prNumber)
+
+		// Post skip message as a regular comment
+		comment := &github.IssueComment{
+			Body: github.String(sizeCheck.SkipMessage),
+		}
+
+		if _, _, err := bot.client.Issues.CreateComment(ctx, owner, repoName, prNumber, comment); err != nil {
+			log.Printf("Error posting skip message: %v", err)
+		}
+		return
+	}
+
+	log.Printf("Using precision: %s for repository: %s", repoConfig.Precision, repoName)
+
 	// Get the PR diff
 	diff, err := bot.getPRDiff(ctx, owner, repoName, prNumber)
 	if err != nil {
@@ -114,8 +168,13 @@ func (bot *CycloneBot) processPullRequest(repo *github.Repository, pr *github.Pu
 		return
 	}
 
-	// Get AI review (placeholder for now)
-	review := bot.getAIReview(diff, pr.GetTitle(), pr.GetBody())
+	// Get AI review with repository-specific configuration
+	review := bot.getAIReviewWithConfig(diff, pr.GetTitle(), pr.GetBody(), repoConfig)
+
+	// Prepend size warning if applicable
+	if sizeCheck.WarningMessage != "" {
+		review.Summary = sizeCheck.WarningMessage + review.Summary
+	}
 
 	// Post the review with line-specific comments
 	if err := bot.postPRReview(ctx, owner, repoName, prNumber, review); err != nil {
@@ -192,21 +251,38 @@ type ClaudeRequest struct {
 	} `json:"messages"`
 }
 
-// getAIReview generates an AI review of the code (placeholder implementation)
-func (bot *CycloneBot) getAIReview(diff, title, body string) ReviewResult {
-	claudeReview := bot.callClaudeAPI(diff, title, body)
+const (
+	// Hard limits for PR review
+	MAX_FILES_FOR_REVIEW     = 25   // Skip review if more files changed
+	MAX_ADDITIONS_FOR_REVIEW = 800  // Skip review if more lines added
+	MAX_TOTAL_CHANGES        = 1200 // Skip review if total changes exceed this
 
-	// Parse Claude's response into structured feedback
+	// Warning thresholds (still review, but warn)
+	WARN_FILES_THRESHOLD     = 20
+	WARN_ADDITIONS_THRESHOLD = 600
+)
+
+type PRSizeCheck struct {
+	ShouldReview   bool
+	WarningMessage string
+	SkipMessage    string
+}
+
+// getAIReview generates an AI review of the code (placeholder implementation)
+func (bot *CycloneBot) getAIReviewWithConfig(diff, title, body string, repoConfig *RepositoryConfig) ReviewResult {
+	claudeReview := bot.callClaudeAPIWithConfig(diff, title, body, repoConfig)
 	return bot.parseClaudeResponse(claudeReview, diff)
 }
 
-func (bot *CycloneBot) callClaudeAPI(diff, title, body string) string {
+func (bot *CycloneBot) callClaudeAPIWithConfig(diff, title, body string, repoConfig *RepositoryConfig) string {
 	prompt := fmt.Sprintf(`You are Cyclone, an AI code review assistant. Please review this GitHub pull request and provide constructive feedback.
 
 **PR Title:** %s
 
 **PR Description:** %s
 
+**Review Precision**: %s
+ 
 **Code Changes:**
 %s
 
@@ -242,17 +318,18 @@ PR_COMMENT:filename:line_number: [emoji] **[category]**: your comment here
 
 When providing commit-able suggestions, use code blocks with the language specified.
 
+%s
 
 Examples:
 PR_COMMENT:main.go:45: 🔍 **nit**: Consider using a more descriptive variable name like 'userCount' instead of 'cnt'
 PR_COMMENT:utils.js:123: ⚠️ **issue**: This function needs error handling for the API call
 PR_COMMENT:api/handler.py:67: 🚫 **blocking**: 🔒 **security**: Potential SQL injection vulnerability - use parameterized queries
 
-Be constructive, helpful, and focus on actionable feedback.`, title, body, diff)
+Be constructive, helpful, and focus on actionable feedback.`, title, body, bot.getPrecisionGuidelines(repoConfig.Precision), diff, repoConfig.CustomPrompt)
 
 	reqBody := ClaudeRequest{
-		Model:     "claude-3-5-sonnet-20241022",
-		MaxTokens: 4000,
+		Model:     "claude-3-5-sonnet-20241022", //make models configureable: claude-sonnet-4-20250514, claude-3-5-sonnet-20241022, claude-3-haiku-20240307
+		MaxTokens: 8000,
 		Messages: []struct {
 			Role    string `json:"role"`
 			Content string `json:"content"`
@@ -306,6 +383,127 @@ Be constructive, helpful, and focus on actionable feedback.`, title, body, diff)
 	return "No response from Claude"
 }
 
+func (bot *CycloneBot) checkPRSize(pr *github.PullRequest) PRSizeCheck {
+	files := pr.GetChangedFiles()
+	additions := pr.GetAdditions()
+	deletions := pr.GetDeletions()
+	totalChanges := additions + deletions
+
+	// Hard limits - skip review entirely
+	if files > MAX_FILES_FOR_REVIEW {
+		return PRSizeCheck{
+			ShouldReview: false,
+			SkipMessage: fmt.Sprintf(`## 🌪️ Cyclone Notice
+
+**PR Too Large for Automated Review**
+
+This PR modifies **%d files**, which exceeds our limit of %d files for automated review.
+
+**Why we skip large PRs:**
+- 🎯 **Review Quality**: Large PRs are harder to review thoroughly
+- 🧠 **Cognitive Load**: Smaller PRs are easier for humans to understand
+- 🐛 **Bug Detection**: Issues are easier to spot in focused changes
+- 🚀 **Faster Iteration**: Smaller PRs get merged faster
+
+**Suggestions:**
+- Consider breaking this into smaller, focused PRs
+- Each PR should ideally change < 15 files and < 400 lines
+- Group related changes together (e.g., "Add user authentication", "Update API endpoints")
+
+*Happy to review once split into smaller chunks!* 🌪️`, files, MAX_FILES_FOR_REVIEW),
+		}
+	}
+
+	if additions > MAX_ADDITIONS_FOR_REVIEW {
+		return PRSizeCheck{
+			ShouldReview: false,
+			SkipMessage: fmt.Sprintf(`## 🌪️ Cyclone Notice
+
+**PR Too Large for Automated Review**
+
+This PR adds **%d lines**, which exceeds our limit of %d lines for automated review.
+
+**Large PRs are challenging because:**
+- 🔍 **Review Thoroughness**: Hard to catch all issues in large changes
+- ⏱️ **Review Time**: Takes much longer to review properly  
+- 🤔 **Context Switching**: Difficult to keep all changes in mind
+- 🔄 **Merge Conflicts**: Larger PRs are more likely to conflict
+
+**Best Practices:**
+- Aim for PRs with < 400 lines of additions
+- Split features into logical, reviewable chunks
+- Consider feature flags for large features
+
+*Ready to provide detailed feedback on smaller PRs!* 🌪️`, additions, MAX_ADDITIONS_FOR_REVIEW),
+		}
+	}
+
+	if totalChanges > MAX_TOTAL_CHANGES {
+		return PRSizeCheck{
+			ShouldReview: false,
+			SkipMessage: fmt.Sprintf(`## 🌪️ Cyclone Notice
+
+**PR Too Large for Automated Review**
+
+This PR has **%d total changes** (+%d, -%d), exceeding our limit of %d changes.
+
+**Recommendation**: Break this into smaller, focused PRs for better review quality and faster merge times.
+
+*Each PR should tell a focused story about one specific change.* 🌪️`, totalChanges, additions, deletions, MAX_TOTAL_CHANGES),
+		}
+	}
+
+	// Warning thresholds - review but warn
+	var warnings []string
+	if files > WARN_FILES_THRESHOLD {
+		warnings = append(warnings, fmt.Sprintf("📁 **%d files changed** (consider < %d)", files, WARN_FILES_THRESHOLD))
+	}
+	if additions > WARN_ADDITIONS_THRESHOLD {
+		warnings = append(warnings, fmt.Sprintf("📈 **%d lines added** (consider < %d)", additions, WARN_ADDITIONS_THRESHOLD))
+	}
+
+	var warningMessage string
+	if len(warnings) > 0 {
+		warningMessage = fmt.Sprintf(`**⚠️ Large PR Warning:**
+%s
+
+*Smaller PRs are easier to review thoroughly and merge faster.*
+
+---`, strings.Join(warnings, "\n"))
+	}
+
+	return PRSizeCheck{
+		ShouldReview:   true,
+		WarningMessage: warningMessage,
+	}
+}
+
+func (bot *CycloneBot) getPrecisionGuidelines(precision ReviewPrecision) string {
+	switch precision {
+	case PrecisionMinor:
+		return `**Review Focus (Minor Precision):**
+- Focus primarily on critical bugs and security issues
+- Skip most style and formatting comments
+- Be lenient with minor code quality issues
+- Emphasize 🚫 **blocking** and ⚠️ **issue** categories`
+
+	case PrecisionStrict:
+		return `**Review Focus (Strict Precision):**
+- Review all aspects including style, performance, and maintainability
+- Be thorough with naming conventions and code organization
+- Suggest improvements for readability and best practices
+- Use all categories including 🧰 **nit** and 💡 **suggestion**
+- Consider long-term maintainability and team standards`
+
+	default: // PrecisionMedium
+		return `**Review Focus (Medium Precision):**
+- Balance between thoroughness and practicality
+- Focus on significant issues while noting important style concerns
+- Emphasize security, bugs, and maintainability
+- Use ⚠️ **issue**, 💡 **suggestion**, and 🧰 **nit** categories appropriately`
+	}
+}
+
 func (bot *CycloneBot) parseClaudeResponse(claudeText, diff string) ReviewResult {
 	lines := strings.Split(claudeText, "\n")
 	var summaryLines []string
@@ -329,7 +527,7 @@ func (bot *CycloneBot) parseClaudeResponse(claudeText, diff string) ReviewResult
 						Path: file,
 						Line: lineNum,
 						Side: "RIGHT",
-						Body: fmt.Sprintf("🌪️ **Cyclone**: %s", comment),
+						Body: fmt.Sprintf("%s", comment),
 					})
 					continue
 				}
@@ -407,8 +605,16 @@ func main() {
 		log.Fatal("GITHUB_TOKEN environment variable is required")
 	}
 
-	// Create the Cyclone bot
-	bot := NewCycloneBot(config)
+	// Load review configuration from JSON file
+	reviewConfig, err := loadReviewConfig("review-config.json")
+	if err != nil {
+		log.Fatalf("Failed to load review configuration: %v", err)
+	}
+
+	log.Printf("Loaded configuration for %d organizations", len(reviewConfig.Organizations))
+
+	// Create the Cyclone bot with review configuration
+	bot := NewCycloneBot(config, reviewConfig)
 
 	// Set up HTTP routes
 	http.HandleFunc("/webhook", bot.handleWebhook)
@@ -420,6 +626,31 @@ func main() {
 	// Start the server
 	log.Printf("Starting server on port %s", config.Port)
 	log.Fatal(http.ListenAndServe(":"+config.Port, nil))
+}
+
+func (bot *CycloneBot) getRepositoryConfig(owner, repoName string) *RepositoryConfig {
+	// Look through all organizations
+	for _, org := range bot.reviewConfig.Organizations {
+		// Match by organization name
+		if org.Name == owner {
+			// Look for specific repository config
+			for _, repo := range org.Repositories {
+				if repo.Name == repoName {
+					return &repo
+				}
+			}
+
+			// Look for a wildcard/default repository config
+			for _, repo := range org.Repositories {
+				if repo.Name == "*" || repo.Name == "default" {
+					return &repo
+				}
+			}
+		}
+	}
+
+	// Return nil if repository not found - this means ignore it
+	return nil
 }
 
 // loadEnvFile loads environment variables from a file
@@ -463,4 +694,20 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+func loadReviewConfig(filename string) (*ReviewConfig, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open config file %s: %w", filename, err)
+	}
+	defer file.Close()
+
+	var config ReviewConfig
+	decoder := json.NewDecoder(file)
+	if err := decoder.Decode(&config); err != nil {
+		return nil, fmt.Errorf("failed to parse config file %s: %w", filename, err)
+	}
+
+	return &config, nil
 }
