@@ -181,13 +181,35 @@ curl -X POST http://localhost:8080/webhook \
 ### Project Structure
 ```
 cyclone-ai/
-├── main.go              # Main application
-├── go.mod              # Go module definition
-├── .env                # Environment variables (local)
-├── review-config.json  # Repository review configuration
-├── .gitignore          # Git ignore rules
-└── README.md           # This file
+├── cmd/
+│   └── cyclone/
+│       └── main.go              # Application entry point
+├── internal/
+│   ├── bot/
+│   │   ├── cyclone.go           # Core bot orchestration and setup
+│   │   └── webhook.go           # GitHub webhook handling
+│   ├── config/
+│   │   ├── config.go            # Configuration loading and management
+│   │   └── types.go             # Configuration-related types and constants
+│   └── review/
+│       ├── ai.go                # Claude AI integration and API calls
+│       ├── github.go            # GitHub API operations (diff, reviews, comments)
+│       ├── parser.go            # Claude response parsing logic
+│       └── types.go             # Review-related types and structures
+├── .env                         # Environment variables (local development)
+├── .gitignore                   # Git ignore rules
+├── review-config.json           # Repository review configuration
+├── go.mod                       # Go module definition
+├── go.sum                       # Go module checksums
+└── README.md                    # This file
 ```
+
+**Package Responsibilities:**
+- **`cmd/cyclone/`** - Application entry point and server startup
+- **`internal/bot/`** - Core bot orchestration, HTTP routing, and webhook handling
+- **`internal/config/`** - Configuration management (environment variables, JSON config)
+- **`internal/review/`** - All review logic (AI integration, GitHub operations, response parsing)
+- **`configs/`** - Configuration files for different environments
 
 ## ⚡ Next Steps
 
