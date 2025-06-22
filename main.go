@@ -317,12 +317,18 @@ Please provide:
 Please structure your response EXACTLY as follows:
 
 SUMMARY: $$
-Provide a comprehensive summary including:
+**A warm, engaging summary** with emojis and thoughtful analysis (not just bullet points) including:**
 - Brief overall analysis of what this PR accomplishes
-- Key changes made (2-4 bullet points)
+- Key changes made 
 - Impact assessment (what this means for the codebase)
 - Good patterns you noticed (acknowledge positive aspects)
 - Any overarching concerns or recommendations
+- Use emojis carefully to make it visually appealing (🚀 ✨ 🎯 📈 🔧 etc.). 
+$$
+
+POEM: $$
+A short, lighthearted poem (2-4 lines) inspired by the changes made formatted in italic.
+Make it fun and relevant to the code changes.
 $$
 
 For any line-specific comments, use this EXACT format:
@@ -336,11 +342,6 @@ PR_COMMENT:main.go:45: 🔍 **nit**: Consider using a more descriptive variable 
 PR_COMMENT:utils.js:123: ⚠️ **issue**: This function needs error handling for the API call
 PR_COMMENT:api/handler.py:67: 🚫 **blocking**: 🔒 **security**: Potential SQL injection vulnerability - use parameterized queries
 
-
-POEM: $$
-End with a short, lighthearted poem (2-4 lines) inspired by the changes made.
-Make it fun and relevant to the code changes.
-$$
 
 **IMPORTANT Rules:**
 - Use SINGLE line numbers only, NOT ranges like "75-82"
@@ -553,13 +554,11 @@ func (bot *CycloneBot) parseClaudeResponse(claudeText, diff string) ReviewResult
 	// Combine summary and poem
 	finalSummary := summary
 	if poem != "" {
-		finalSummary += "\n\n" + poem
+		finalSummary += "\n\n---\n\n**And now, a little poem about your changes 🌪️✨**\n" + poem
 	}
 
 	// Add Cyclone branding if not present
-	if !strings.Contains(finalSummary, "🌪️") {
-		finalSummary = "## 🌪️ Cyclone AI Code Review\n\n" + finalSummary
-	}
+	finalSummary = "## 🌪️ Cyclone AI Code Review\n\n" + finalSummary
 
 	return ReviewResult{
 		Summary:  finalSummary,
