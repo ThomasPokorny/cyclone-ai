@@ -29,8 +29,6 @@ type OrganizationConfig struct {
 	Name         string             `json:"name"`
 	Repositories []RepositoryConfig `json:"repositories"`
 }
-
-// ReviewConfig holds the complete review configuration
 type ReviewConfig struct {
 	Organizations []OrganizationConfig `json:"organizations"`
 }

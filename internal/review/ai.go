@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/ThomasPokorny/cyclone-ai/internal/config"
+	"cyclone/internal/config"
 )
 
 // AIClient handles all AI/Claude API operations

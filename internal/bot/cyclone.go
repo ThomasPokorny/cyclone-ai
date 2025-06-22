@@ -7,10 +7,9 @@ import (
 	"net/http"
 
 	"github.com/google/go-github/v57/github"
-	"golang.org/x/oauth2"
 
-	"github.com/ThomasPokorny/cyclone-ai/internal/config"
-	"github.com/ThomasPokorny/cyclone-ai/internal/review"
+	"cyclone/internal/config"
+	"cyclone/internal/review"
 )
 
 // CycloneBot handles GitHub operations and AI integration

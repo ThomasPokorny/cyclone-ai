@@ -32,7 +32,7 @@ func Load() (*Config, *ReviewConfig, error) {
 	}
 
 	// Load review configuration from JSON file
-	reviewCfg, err := loadReviewConfig("configs/review-config.json")
+	reviewCfg, err := loadReviewConfig("review-config.json")
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to load review configuration: %w", err)
 	}

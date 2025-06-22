@@ -4,19 +4,19 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/ThomasPokorny/cyclone-ai/internal/bot"
-	"github.com/ThomasPokorny/cyclone-ai/internal/config"
+	"cyclone/internal/bot"
+	"cyclone/internal/config"
 )
 
 func main() {
-	// Load configuration
-	cfg, err := config.Load()
+	// Load configuration (returns both app config and review config)
+	cfg, reviewCfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
-	// Create bot
-	cycloneBot, err := bot.New(cfg)
+	// Create bot with both configurations
+	cycloneBot, err := bot.New(cfg, reviewCfg)
 	if err != nil {
 		log.Fatalf("Failed to create bot: %v", err)
 	}
