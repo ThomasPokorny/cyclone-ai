@@ -251,7 +251,7 @@ PR_COMMENT:api/handler.py:67: 🚫 **blocking**: 🔒 **security**: Potential SQ
 Be constructive, helpful, and focus on actionable feedback.`, title, body, diff)
 
 	reqBody := ClaudeRequest{
-		Model:     "claude-sonnet-4-20250514",
+		Model:     "claude-3-5-sonnet-20241022",
 		MaxTokens: 4000,
 		Messages: []struct {
 			Role    string `json:"role"`
