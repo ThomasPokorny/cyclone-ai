@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -16,10 +17,13 @@ func Load() (*Config, *ReviewConfig, error) {
 
 	// Load application configuration from environment variables
 	cfg := &Config{
-		GitHubToken:    os.Getenv("GITHUB_TOKEN"),
-		Port:           getEnv("PORT", "8080"),
-		WebhookSecret:  os.Getenv("WEBHOOK_SECRET"),
-		AnthropicToken: os.Getenv("ANTHROPIC_API_KEY"),
+		GitHubToken:          os.Getenv("GITHUB_TOKEN"),
+		Port:                 getEnv("PORT", "8080"),
+		WebhookSecret:        os.Getenv("WEBHOOK_SECRET"),
+		AnthropicToken:       os.Getenv("ANTHROPIC_API_KEY"),
+		GitHubAppID:          parseInt64Env("GITHUB_APP_ID"),
+		GitHubPrivateKeyPath: os.Getenv("GITHUB_PRIVATE_KEY_PATH"),
+		GitHubWebhookSecret:  os.Getenv("GITHUB_WEBHOOK_SECRET"),
 	}
 
 	// Validate required configuration
@@ -76,8 +80,9 @@ func GetPrecisionGuidelines(precision ReviewPrecision) string {
 		return `**Review Focus (Minor Precision):**
 - Focus primarily on critical bugs and security issues
 - Skip most style and formatting comments
+- Focus on highly significant issues
 - Be lenient with minor code quality issues
-- Emphasize 🚫 **blocking** and ⚠️ **issue** categories`
+- Emphasize creating comments for 🚫 **blocking** and ⚠️ **issue** categories including the 💡 **suggestion** category only if critical`
 
 	case PrecisionStrict:
 		return `**Review Focus (Strict Precision):**
@@ -154,4 +159,13 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+func parseInt64Env(key string) int64 {
+	if value := os.Getenv(key); value != "" {
+		if parsed, err := strconv.ParseInt(value, 10, 64); err == nil {
+			return parsed
+		}
+	}
+	return 0
 }

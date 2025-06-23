@@ -5,6 +5,7 @@ go 1.23.0
 toolchain go1.24.4
 
 require (
+	github.com/golang-jwt/jwt/v4 v4.5.2
 	github.com/google/go-github/v57 v57.0.0
 	golang.org/x/oauth2 v0.30.0
 )

@@ -1,7 +1,11 @@
 package bot
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 
@@ -10,9 +14,12 @@ import (
 
 // WebhookPayload represents the GitHub webhook payload
 type WebhookPayload struct {
-	Action      string              `json:"action"`
-	PullRequest *github.PullRequest `json:"pull_request"`
-	Repository  *github.Repository  `json:"repository"`
+	Action       string              `json:"action"`
+	PullRequest  *github.PullRequest `json:"pull_request"`
+	Repository   *github.Repository  `json:"repository"`
+	Installation *struct {
+		ID int64 `json:"id"`
+	} `json:"installation"`
 }
 
 // handleWebhook processes incoming GitHub webhooks
@@ -22,9 +29,25 @@ func (bot *CycloneBot) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		log.Printf("Error reading webhook body: %v", err)
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+
+	if bot.config.GitHubWebhookSecret != "" {
+		signature := r.Header.Get("X-Hub-Signature-256")
+		if !bot.validateWebhookSignature(body, signature) {
+			log.Printf("Invalid webhook signature")
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+	}
+
 	// Parse the webhook payload
 	var payload WebhookPayload
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+	if err := json.Unmarshal(body, &payload); err != nil {
 		log.Printf("Error decoding webhook payload: %v", err)
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
@@ -39,8 +62,14 @@ func (bot *CycloneBot) handleWebhook(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Processing PR #%d: %s", payload.PullRequest.GetNumber(), payload.Action)
 
+	// Get installation ID
+	var installationID int64
+	if payload.Installation != nil {
+		installationID = payload.Installation.ID
+	}
+
 	// Process the PR in a goroutine to avoid blocking the webhook
-	go bot.ProcessPullRequest(payload.Repository, payload.PullRequest)
+	go bot.ProcessPullRequest(payload.Repository, payload.PullRequest, installationID)
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -70,4 +99,21 @@ func (bot *CycloneBot) shouldTriggerReview(action string, pr *github.PullRequest
 		// Skip all other actions (closed, edited, etc.)
 		return false
 	}
+}
+
+func (bot *CycloneBot) validateWebhookSignature(payload []byte, signature string) bool {
+	if signature == "" {
+		return false
+	}
+
+	// Remove 'sha256=' prefix
+	if len(signature) > 7 && signature[:7] == "sha256=" {
+		signature = signature[7:]
+	}
+
+	mac := hmac.New(sha256.New, []byte(bot.config.GitHubWebhookSecret))
+	mac.Write(payload)
+	expectedMAC := hex.EncodeToString(mac.Sum(nil))
+
+	return hmac.Equal([]byte(signature), []byte(expectedMAC))
 }

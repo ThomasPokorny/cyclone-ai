@@ -6,6 +6,10 @@ type Config struct {
 	Port           string
 	WebhookSecret  string
 	AnthropicToken string
+
+	GitHubAppID          int64
+	GitHubPrivateKeyPath string
+	GitHubWebhookSecret  string
 }
 
 // ReviewPrecision defines how strict the review should be

@@ -15,6 +15,7 @@ import (
 // CycloneBot handles GitHub operations and AI integration
 type CycloneBot struct {
 	githubClient *review.GitHubClient
+	githubApp    *review.GitHubAppAuth // Add this
 	aiClient     *review.AIClient
 	config       *config.Config
 	reviewConfig *config.ReviewConfig
@@ -22,10 +23,20 @@ type CycloneBot struct {
 
 // New creates a new Cyclone bot instance
 func New(cfg *config.Config, reviewCfg *config.ReviewConfig) (*CycloneBot, error) {
-	// Initialize GitHub client
+	// Initialize GitHub client (keep for fallback)
 	githubClient, err := review.NewGitHubClient(cfg.GitHubToken)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GitHub client: %w", err)
+	}
+
+	// Initialize GitHub App auth
+	var githubApp *review.GitHubAppAuth
+	if cfg.GitHubAppID != 0 && cfg.GitHubPrivateKeyPath != "" {
+		githubApp, err = review.NewGitHubAppAuth(cfg.GitHubAppID, cfg.GitHubPrivateKeyPath)
+		if err != nil {
+			log.Printf("Warning: Failed to initialize GitHub App auth: %v", err)
+			// Continue with personal token
+		}
 	}
 
 	// Initialize AI client
@@ -33,10 +44,27 @@ func New(cfg *config.Config, reviewCfg *config.ReviewConfig) (*CycloneBot, error
 
 	return &CycloneBot{
 		githubClient: githubClient,
+		githubApp:    githubApp,
 		aiClient:     aiClient,
 		config:       cfg,
 		reviewConfig: reviewCfg,
 	}, nil
+}
+
+func (bot *CycloneBot) createInstallationClient(ctx context.Context, installationID int64) (*review.GitHubClient, error) {
+	if bot.githubApp == nil {
+		// Fallback to personal token
+		return bot.githubClient, nil
+	}
+
+	// Get installation token
+	token, err := bot.githubApp.GetInstallationToken(ctx, installationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get installation token: %w", err)
+	}
+
+	// Create client with installation token
+	return review.NewGitHubClient(token)
 }
 
 // SetupRoutes configures HTTP routes for the bot
@@ -49,7 +77,7 @@ func (bot *CycloneBot) SetupRoutes() {
 }
 
 // ProcessPullRequest handles the main logic for reviewing a PR
-func (bot *CycloneBot) ProcessPullRequest(repo *github.Repository, pr *github.PullRequest) {
+func (bot *CycloneBot) ProcessPullRequest(repo *github.Repository, pr *github.PullRequest, installationID int64) {
 	ctx := context.Background()
 
 	owner := repo.GetOwner().GetLogin()
@@ -79,8 +107,14 @@ func (bot *CycloneBot) ProcessPullRequest(repo *github.Repository, pr *github.Pu
 
 	log.Printf("Using precision: %s for repository: %s", repoConfig.Precision, repoName)
 
+	githubClient, err := bot.createInstallationClient(ctx, installationID)
+	if err != nil {
+		log.Printf("Error creating installation client: %v", err)
+		return
+	}
+
 	// Get the PR diff
-	diff, err := bot.githubClient.GetPRDiff(ctx, owner, repoName, prNumber)
+	diff, err := githubClient.GetPRDiff(ctx, owner, repoName, prNumber)
 	if err != nil {
 		log.Printf("Error getting PR diff: %v", err)
 		return
@@ -95,7 +129,7 @@ func (bot *CycloneBot) ProcessPullRequest(repo *github.Repository, pr *github.Pu
 	}
 
 	// Post the review with line-specific comments
-	if err := bot.githubClient.PostReview(ctx, owner, repoName, prNumber, reviewResult); err != nil {
+	if err := githubClient.PostReview(ctx, owner, repoName, prNumber, reviewResult); err != nil {
 		log.Printf("Error posting PR review: %v", err)
 		return
 	}
