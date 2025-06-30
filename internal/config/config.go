@@ -2,16 +2,14 @@ package config
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"strconv"
 	"strings"
 )
 
 // Load loads both application and review configurations
-func Load() (*Config, *ReviewConfig, error) {
+func Load() (*Config, error) {
 	// Load .env file if it exists
 	loadEnvFile(".env")
 
@@ -24,26 +22,29 @@ func Load() (*Config, *ReviewConfig, error) {
 		GitHubAppID:          parseInt64Env("GITHUB_APP_ID"),
 		GitHubPrivateKeyPath: os.Getenv("GITHUB_PRIVATE_KEY_PATH"),
 		GitHubWebhookSecret:  os.Getenv("GITHUB_WEBHOOK_SECRET"),
+		SupabaseURL:          os.Getenv("SUPABASE_URL"),
+		SupabaseAPIKey:       os.Getenv("SUPABASE_API_KEY"),
 	}
 
 	// Validate required configuration
 	if cfg.GitHubToken == "" {
-		return nil, nil, fmt.Errorf("GITHUB_TOKEN environment variable is required")
+		return nil, fmt.Errorf("GITHUB_TOKEN environment variable is required")
 	}
 
 	if cfg.AnthropicToken == "" {
-		return nil, nil, fmt.Errorf("ANTHROPIC_API_KEY environment variable is required")
+		return nil, fmt.Errorf("ANTHROPIC_API_KEY environment variable is required")
 	}
 
-	// Load review configuration from JSON file
-	reviewCfg, err := loadReviewConfig("review-config.json")
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to load review configuration: %w", err)
+	// Validate Supabase configuration
+	if cfg.SupabaseURL == "" {
+		return nil, fmt.Errorf("SUPABASE_URL environment variable is required")
 	}
 
-	log.Printf("Loaded configuration for %d organizations", len(reviewCfg.Organizations))
+	if cfg.SupabaseAPIKey == "" {
+		return nil, fmt.Errorf("SUPABASE_ANON_KEY environment variable is required")
+	}
 
-	return cfg, reviewCfg, nil
+	return cfg, nil
 }
 
 // GetRepositoryConfig finds the configuration for a specific repository
@@ -99,23 +100,6 @@ func GetPrecisionGuidelines(precision ReviewPrecision) string {
 - Emphasize security, bugs, and maintainability
 - Use ⚠️ **issue**, 💡 **suggestion**, and 🧰 **nit** categories appropriately`
 	}
-}
-
-// loadReviewConfig loads review configuration from a JSON file
-func loadReviewConfig(filename string) (*ReviewConfig, error) {
-	file, err := os.Open(filename)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open config file %s: %w", filename, err)
-	}
-	defer file.Close()
-
-	var config ReviewConfig
-	decoder := json.NewDecoder(file)
-	if err := decoder.Decode(&config); err != nil {
-		return nil, fmt.Errorf("failed to parse config file %s: %w", filename, err)
-	}
-
-	return &config, nil
 }
 
 // loadEnvFile loads environment variables from a file

@@ -10,6 +10,9 @@ type Config struct {
 	GitHubAppID          int64
 	GitHubPrivateKeyPath string
 	GitHubWebhookSecret  string
+
+	SupabaseURL    string
+	SupabaseAPIKey string
 }
 
 // ReviewPrecision defines how strict the review should be

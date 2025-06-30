@@ -14,15 +14,15 @@ import (
 
 // CycloneBot handles GitHub operations and AI integration
 type CycloneBot struct {
-	githubClient *review.GitHubClient
-	githubApp    *review.GitHubAppAuth // Add this
-	aiClient     *review.AIClient
-	config       *config.Config
-	reviewConfig *config.ReviewConfig
+	githubClient   *review.GitHubClient
+	githubApp      *review.GitHubAppAuth // Add this
+	aiClient       *review.AIClient
+	config         *config.Config
+	configProvider config.ConfigProvider
 }
 
 // New creates a new Cyclone bot instance
-func New(cfg *config.Config, reviewCfg *config.ReviewConfig) (*CycloneBot, error) {
+func New(cfg *config.Config, configProvider config.ConfigProvider) (*CycloneBot, error) {
 	// Initialize GitHub client (keep for fallback)
 	githubClient, err := review.NewGitHubClient(cfg.GitHubToken)
 	if err != nil {
@@ -43,11 +43,11 @@ func New(cfg *config.Config, reviewCfg *config.ReviewConfig) (*CycloneBot, error
 	aiClient := review.NewAIClient(cfg.AnthropicToken, "claude-sonnet-4-20250514")
 
 	return &CycloneBot{
-		githubClient: githubClient,
-		githubApp:    githubApp,
-		aiClient:     aiClient,
-		config:       cfg,
-		reviewConfig: reviewCfg,
+		githubClient:   githubClient,
+		githubApp:      githubApp,
+		aiClient:       aiClient,
+		config:         cfg,
+		configProvider: configProvider,
 	}, nil
 }
 
@@ -87,10 +87,9 @@ func (bot *CycloneBot) ProcessPullRequest(repo *github.Repository, pr *github.Pu
 	log.Printf("Processing PR #%d in %s/%s", prNumber, owner, repoName)
 
 	// Get repository-specific configuration
-	repoConfig := bot.reviewConfig.GetRepositoryConfig(owner, repoName)
+	repoConfig, er := bot.configProvider.GetRepositoryConfig(ctx, owner, repoName, installationID)
 	if repoConfig == nil {
-		log.Printf("Repository %s/%s not found in configuration - skipping review", owner, repoName)
-		return
+		log.Printf("Repository %s/%s not found in configuration - skipping review: %s", owner, repoName, er)
 	}
 
 	// Check PR size before proceeding

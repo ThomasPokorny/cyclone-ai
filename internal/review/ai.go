@@ -72,6 +72,7 @@ Please provide:
 - Use collaborative language ("we could" vs "you should")
 - Focus on logic correctness, security, maintainability, and team conventions
 - Acknowledge good patterns when present
+- Don't create comments suggesting adding try/catch blocks
 
 **Comment Categories - Use these prefixes:**
 - 🧰 **nit**: Minor style/preference issues, non-blocking
