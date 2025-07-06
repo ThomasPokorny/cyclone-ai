@@ -90,6 +90,7 @@ func (bot *CycloneBot) ProcessPullRequest(repo *github.Repository, pr *github.Pu
 	repoConfig, er := bot.configProvider.GetRepositoryConfig(ctx, owner, repoName, installationID)
 	if repoConfig == nil {
 		log.Printf("Repository %s/%s not found in configuration - skipping review: %s", owner, repoName, er)
+		return
 	}
 
 	// Check PR size before proceeding
